@@ -256,6 +256,7 @@
             font-size: 36px;
             font-weight: 700;
             color: #ffffff;
+            flex-shrink: 0;
         }
 
         .member-info h3 {
@@ -326,6 +327,7 @@
             font-size: 56px;
             font-weight: 700;
             color: #ffffff;
+            flex-shrink: 0;
         }
 
         .profile-info h2 {
@@ -416,14 +418,40 @@
             50% { opacity: 0.5; }
         }
 
+        .refresh-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: #cc0000;
+            color: #ffffff;
+            border: none;
+            padding: 15px 30px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            z-index: 999;
+            letter-spacing: 2px;
+            box-shadow: 0 5px 15px rgba(204, 0, 0, 0.5);
+        }
+
+        .refresh-btn:hover {
+            background: #ff0000;
+        }
+
         @media (max-width: 768px) {
             .header-content {
                 flex-direction: column;
                 gap: 20px;
             }
 
+            .nav-buttons {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+
             .welcome-section h1 {
                 font-size: 36px;
+                letter-spacing: 4px;
             }
 
             .stats-grid {
@@ -437,6 +465,14 @@
             .profile-header {
                 flex-direction: column;
                 text-align: center;
+            }
+
+            .form-container {
+                padding: 30px 20px;
+            }
+
+            .profile-content {
+                padding: 30px 20px;
             }
         }
     </style>
@@ -535,8 +571,8 @@
             <div class="search-bar">
                 <input type="text" id="searchInput" placeholder="CARI AHLI..." onkeyup="searchMembers()">
             </div>
-            <div id="loadingMembers" class="loading">LOADING MEMBERS</div>
-            <div id="membersGrid" class="members-grid" style="display: none;"></div>
+            <div id="loadingMembers" class="loading" style="display: none;">LOADING MEMBERS</div>
+            <div id="membersGrid" class="members-grid"></div>
             <div id="emptyMembers" class="empty-state" style="display: none;">
                 <h3>TIADA AHLI</h3>
                 <p>Jadilah yang pertama untuk join</p>
@@ -593,13 +629,26 @@
         </div>
     </div>
 
+    <button class="refresh-btn" onclick="refreshMembers()" id="refreshBtn" style="display: none;">REFRESH</button>
+
     <script>
         let members = [];
         let currentUser = null;
         let allMembersData = [];
+        let useSharedStorage = false;
 
         async function init() {
-            const storedUser = await getStorageData('dvlz_current_user');
+            try {
+                if (window.storage) {
+                    useSharedStorage = true;
+                    console.log('Using shared storage');
+                }
+            } catch (e) {
+                useSharedStorage = false;
+                console.log('Using local storage');
+            }
+
+            const storedUser = await getStorageData('dvlz_current_user', false);
             if (storedUser) {
                 currentUser = storedUser;
                 updateUIForLoggedInUser();
@@ -609,38 +658,85 @@
             updateStats();
         }
 
-        async function getStorageData(key) {
+        async function getStorageData(key, shared = true) {
             try {
-                const result = await window.storage.get(key);
-                return result ? JSON.parse(result.value) : null;
+                if (useSharedStorage && window.storage) {
+                    const result = await window.storage.get(key, shared);
+                    return result ? JSON.parse(result.value) : null;
+                } else {
+                    const data = localStorage.getItem(key);
+                    return data ? JSON.parse(data) : null;
+                }
             } catch (error) {
+                console.error('Get storage error:', error);
                 return null;
             }
         }
 
-        async function setStorageData(key, value) {
+        async function setStorageData(key, value, shared = true) {
             try {
-                await window.storage.set(key, JSON.stringify(value), true);
+                if (useSharedStorage && window.storage) {
+                    await window.storage.set(key, JSON.stringify(value), shared);
+                    return true;
+                } else {
+                    localStorage.setItem(key, JSON.stringify(value));
+                    return true;
+                }
+            } catch (error) {
+                console.error('Set storage error:', error);
+                return false;
+            }
+        }
+
+        async function listStorageKeys(prefix) {
+            try {
+                if (useSharedStorage && window.storage) {
+                    const result = await window.storage.list(prefix, true);
+                    return result && result.keys ? result.keys : [];
+                } else {
+                    const keys = [];
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        if (key.startsWith(prefix)) {
+                            keys.push(key);
+                        }
+                    }
+                    return keys;
+                }
+            } catch (error) {
+                console.error('List keys error:', error);
+                return [];
+            }
+        }
+
+        async function deleteStorageData(key, shared = true) {
+            try {
+                if (useSharedStorage && window.storage) {
+                    await window.storage.delete(key, shared);
+                } else {
+                    localStorage.removeItem(key);
+                }
                 return true;
             } catch (error) {
-                console.error('Storage error:', error);
+                console.error('Delete storage error:', error);
                 return false;
             }
         }
 
         async function loadMembers() {
             try {
-                const keys = await window.storage.list('dvlz_member_');
-                if (!keys || !keys.keys || keys.keys.length === 0) {
+                const keys = await listStorageKeys('dvlz_member_');
+                
+                if (keys.length === 0) {
                     allMembersData = [];
                     members = [];
                     return;
                 }
 
-                const memberPromises = keys.keys.map(async (key) => {
+                const memberPromises = keys.map(async (key) => {
                     try {
-                        const result = await window.storage.get(key, true);
-                        return result ? JSON.parse(result.value) : null;
+                        const data = await getStorageData(key, true);
+                        return data;
                     } catch (error) {
                         return null;
                     }
@@ -679,15 +775,23 @@
             }
             
             if (section === 'members') {
-                document.getElementById('loadingMembers').style.display = 'block';
-                document.getElementById('membersGrid').style.display = 'none';
-                document.getElementById('emptyMembers').style.display = 'none';
-                
-                await loadMembers();
-                renderMembers();
-                
-                document.getElementById('loadingMembers').style.display = 'none';
+                document.getElementById('refreshBtn').style.display = 'block';
+                await refreshMembers();
+            } else {
+                document.getElementById('refreshBtn').style.display = 'none';
             }
+        }
+
+        async function refreshMembers() {
+            document.getElementById('loadingMembers').style.display = 'block';
+            document.getElementById('membersGrid').style.display = 'none';
+            document.getElementById('emptyMembers').style.display = 'none';
+            
+            await loadMembers();
+            updateStats();
+            renderMembers();
+            
+            document.getElementById('loadingMembers').style.display = 'none';
         }
 
         async function handleJoin(event) {
@@ -733,11 +837,11 @@
                 joinedDate: new Date().toLocaleDateString('ms-MY')
             };
             
-            const saved = await setStorageData(`dvlz_member_${member.id}`, member);
+            const saved = await setStorageData(`dvlz_member_${member.id}`, member, true);
             
             if (saved) {
                 currentUser = member;
-                await setStorageData('dvlz_current_user', currentUser);
+                await setStorageData('dvlz_current_user', currentUser, false);
                 
                 await loadMembers();
                 updateStats();
@@ -792,11 +896,11 @@
                 bio
             };
             
-            const saved = await setStorageData(`dvlz_member_${currentUser.id}`, updatedMember);
+            const saved = await setStorageData(`dvlz_member_${currentUser.id}`, updatedMember, true);
             
             if (saved) {
                 currentUser = updatedMember;
-                await setStorageData('dvlz_current_user', currentUser);
+                await setStorageData('dvlz_current_user', currentUser, false);
                 
                 await loadMembers();
                 updateStats();
@@ -896,11 +1000,7 @@
 
         async function logout() {
             currentUser = null;
-            try {
-                await window.storage.delete('dvlz_current_user');
-            } catch (error) {
-                console.error('Logout error:', error);
-            }
+            await deleteStorageData('dvlz_current_user', false);
             updateUIForLoggedOutUser();
             showSection('home');
         }
